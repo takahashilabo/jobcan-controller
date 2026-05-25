@@ -1,0 +1,19 @@
+# 認証情報・セッション（絶対にcommitしないこと）
+.env
+*.json.session
+
+# 仮想環境
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# ログ
+*.log
+*.err
