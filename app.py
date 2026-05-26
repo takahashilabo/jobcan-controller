@@ -43,6 +43,7 @@ class JobcanApp(rumps.App):
             msg = "出勤しました ✓" if new_state else "退勤しました ✓"
             rumps.notification("Jobcan", "", msg)
         except Exception as e:
+            print(f"[jobcan] エラー: {e}", flush=True)
             rumps.notification("Jobcan", "エラー", str(e))
         finally:
             self.action_btn.set_callback(self._on_action)

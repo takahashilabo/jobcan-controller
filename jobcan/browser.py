@@ -19,6 +19,10 @@ STATUS_SEL        = "#working_status"
 WORKING_TEXT      = "勤務中"
 
 
+class _NeedsAuth(Exception):
+    """セッション切れで再認証が必要"""
+
+
 def clock_action(currently_working: bool) -> bool:
     """
     打刻ボタンを押して新しい勤務状態を返す。
@@ -28,14 +32,24 @@ def clock_action(currently_working: bool) -> bool:
         time.sleep(1.5)
         return not currently_working
 
-    return _browser_clock(currently_working)
+    # セッションが存在する場合はまずヘッドレスで試みる
+    if os.path.exists(SESSION_FILE):
+        try:
+            return _do_clock(currently_working, headless=True)
+        except _NeedsAuth:
+            print("[jobcan] セッション切れ。再認証が必要です。")
+
+    # 認証が必要 → ブラウザを表示して 2FA を待つ
+    import rumps
+    rumps.notification("Jobcan", "認証が必要です", "ブラウザで2FA認証を完了してください")
+    return _do_clock(currently_working, headless=False)
 
 
-def _browser_clock(currently_working: bool) -> bool:
+def _do_clock(currently_working: bool, headless: bool) -> bool:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=headless)
 
         ctx_kwargs = {}
         if os.path.exists(SESSION_FILE):
@@ -48,10 +62,16 @@ def _browser_clock(currently_working: bool) -> bool:
             page.goto(JOBCAN_URL)
             page.wait_for_load_state("networkidle")
 
-            # 大学 SSO にリダイレクトされた場合に自動ログイン
+            # SSO にリダイレクトされた場合
             if SSO_URL_PATTERN and SSO_URL_PATTERN in page.url:
+                if headless:
+                    # ヘッドレスでは 2FA を処理できないので呼び出し元に通知
+                    raise _NeedsAuth()
+                # ブラウザ表示モード: 自動ログイン → 2FA 待機
                 _handle_sso(page)
-                page.wait_for_load_state("networkidle")
+                if SSO_URL_PATTERN in page.url:
+                    print("[jobcan] ブラウザで追加認証を完了してください（最大2分待機）...")
+                    page.wait_for_url("**jobcan.jp**", timeout=120_000)
 
             # 打刻ボタンをクリック
             page.wait_for_selector(BUTTON_SEL, timeout=30_000)
@@ -73,8 +93,27 @@ def _browser_clock(currently_working: bool) -> bool:
 
 
 def _handle_sso(page):
+    # フォームが表示されるまで待機
+    page.wait_for_selector("input[name='username']", state="visible")
+
+    # ユーザー名・パスワード入力
     if SSO_USERNAME:
         page.fill(SSO_USERNAME_SEL, SSO_USERNAME)
     if SSO_PASSWORD:
-        page.fill(SSO_PASSWORD_SEL, SSO_PASSWORD)
-        page.click(SSO_SUBMIT_SEL)
+        try:
+            page.fill(SSO_PASSWORD_SEL, SSO_PASSWORD)
+        except Exception:
+            page.fill("input[type='password']", SSO_PASSWORD)
+
+    # ログインボタンをクリック（複数のセレクタを順に試す）
+    for sel in [SSO_SUBMIT_SEL,
+                "#loginbtn",
+                "input[name='loginbtn']",
+                "input[type='submit']",
+                "button[type='submit']",
+                "button"]:
+        try:
+            page.click(sel, timeout=3000)
+            break
+        except Exception:
+            continue
