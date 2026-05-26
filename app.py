@@ -54,4 +54,8 @@ class JobcanApp(rumps.App):
 
 
 if __name__ == "__main__":
+    # Dock アイコンを非表示にする（メニューバーアプリとして動作）
+    from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
     JobcanApp().run()
