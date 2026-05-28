@@ -32,18 +32,22 @@ class JobcanApp(rumps.App):
     # ── ボタン押下 ────────────────────────────────────────────────────────────
 
     def _on_action(self, _):
+        print("[app] ボタンが押されました", flush=True)
         self.title = self.TITLE_BUSY
         self.action_btn.set_callback(None)  # 処理中は連打防止
         threading.Thread(target=self._run_clock, daemon=True).start()
 
     def _run_clock(self):
         try:
+            print(f"[app] 処理開始 currently_working={self.state.is_working}", flush=True)
             new_state = clock_action(currently_working=self.state.is_working)
             self.state.set_working(new_state)
             msg = "出勤しました ✓" if new_state else "退勤しました ✓"
+            print(f"[app] {msg}", flush=True)
             rumps.notification("Jobcan", "", msg)
         except Exception as e:
-            print(f"[jobcan] エラー: {e}", flush=True)
+            print(f"[app] エラー: {e}", flush=True)
+            import traceback; traceback.print_exc()
             rumps.notification("Jobcan", "エラー", str(e))
         finally:
             self.action_btn.set_callback(self._on_action)

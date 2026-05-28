@@ -6,6 +6,7 @@ load_dotenv()
 
 MOCK              = os.getenv("MOCK", "false").lower() == "true"
 JOBCAN_URL        = os.getenv("JOBCAN_URL", "https://ssl.jobcan.jp/employee")
+JOBCAN_SSO_URL    = os.getenv("JOBCAN_SSO_URL", "")
 SSO_URL_PATTERN   = os.getenv("SSO_URL_PATTERN", "")
 SSO_USERNAME      = os.getenv("SSO_USERNAME", "")
 SSO_PASSWORD      = os.getenv("SSO_PASSWORD", "")
@@ -59,28 +60,47 @@ def _do_clock(currently_working: bool, headless: bool) -> bool:
         page = context.new_page()
 
         try:
+            print(f"[browser] アクセス中: {JOBCAN_URL} (headless={headless})", flush=True)
             page.goto(JOBCAN_URL)
             page.wait_for_load_state("networkidle")
+            print(f"[browser] 現在のURL: {page.url}", flush=True)
 
-            # SSO にリダイレクトされた場合
-            if SSO_URL_PATTERN and SSO_URL_PATTERN in page.url:
+            # 打刻ボタンの有無でセッション有効性を判定
+            button = page.query_selector(BUTTON_SEL)
+            if button is None:
                 if headless:
-                    # ヘッドレスでは 2FA を処理できないので呼び出し元に通知
+                    print("[browser] 打刻ボタンなし → 再認証が必要", flush=True)
                     raise _NeedsAuth()
-                # ブラウザ表示モード: 自動ログイン → 2FA 待機
-                _handle_sso(page)
-                if SSO_URL_PATTERN in page.url:
-                    print("[jobcan] ブラウザで追加認証を完了してください（最大2分待機）...")
-                    page.wait_for_url("**jobcan.jp**", timeout=120_000)
+                # ブラウザ表示モード: 大学SSOへ直接ジャンプして自動ログイン
+                if JOBCAN_SSO_URL:
+                    print(f"[browser] SSO URL へ移動: {JOBCAN_SSO_URL}", flush=True)
+                    page.goto(JOBCAN_SSO_URL)
+                    page.wait_for_load_state("networkidle")
+                    print(f"[browser] SSO 後URL: {page.url}", flush=True)
+                if SSO_URL_PATTERN and SSO_URL_PATTERN in page.url:
+                    _handle_sso(page)
+                if SSO_URL_PATTERN and SSO_URL_PATTERN in page.url:
+                    print("[jobcan] ブラウザで追加認証を完了してください（最大2分待機）...", flush=True)
+                    # ssl.jobcan.jp に到達するまで待つ（id.jobcan.jp では不十分）
+                    page.wait_for_url("**/ssl.jobcan.jp/**", timeout=120_000)
+                print(f"[browser] 認証後URL: {page.url}", flush=True)
+                # 打刻ページでなければ移動
+                if "/employee" not in page.url:
+                    page.goto(JOBCAN_URL)
+                    page.wait_for_load_state("networkidle")
+                    print(f"[browser] employee 移動後URL: {page.url}", flush=True)
 
+            print(f"[browser] 打刻ボタン待機中...", flush=True)
             # 打刻ボタンをクリック
             page.wait_for_selector(BUTTON_SEL, timeout=30_000)
             page.click(BUTTON_SEL)
+            print(f"[browser] 打刻ボタンをクリック", flush=True)
 
             # 状態反映を待ってから確認
             time.sleep(2)
             status_text = page.text_content(STATUS_SEL) or ""
             is_working = WORKING_TEXT in status_text
+            print(f"[browser] ステータス: '{status_text.strip()}' → is_working={is_working}", flush=True)
 
             # セッション保存（次回ログイン省略）
             context.storage_state(path=SESSION_FILE)
