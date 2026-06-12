@@ -70,8 +70,8 @@ def _do(currently_working: bool, headless: bool) -> bool:
                     print(f"[browser] SSO 後URL: {page.url}", flush=True)
                 if SSO_URL_PATTERN and SSO_URL_PATTERN in page.url:
                     _handle_sso(page)
-                if SSO_URL_PATTERN and SSO_URL_PATTERN in page.url:
-                    print("[jobcan] ブラウザで追加認証を完了してください（最大2分待機）...", flush=True)
+                if "ssl.jobcan.jp" not in page.url:
+                    print("[jobcan] 認証を完了してください（最大2分待機）...", flush=True)
                     page.wait_for_url("**/ssl.jobcan.jp/**", timeout=120_000)
                 print(f"[browser] 認証後URL: {page.url}", flush=True)
                 if "/employee" not in page.url:
