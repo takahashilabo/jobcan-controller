@@ -129,9 +129,19 @@ def _handle_sso(page):
         try:
             page.wait_for_selector("input[type='password']", state="visible", timeout=10_000)
             page.fill("input[type='password']", SSO_PASSWORD)
-            _sso_click_submit(page)
         except Exception:
             pass
+
+    # ２段階認証ボタンが表示されていればクリック（汎用フォールバックより先に試みる）
+    try:
+        page.wait_for_selector("button:has-text('２段階認証')", state="visible", timeout=3_000)
+        page.click("button:has-text('２段階認証')")
+        print("[browser] ２段階認証でログインをクリック", flush=True)
+        return
+    except Exception:
+        pass
+
+    _sso_click_submit(page)
 
 
 def _sso_click_submit(page):
