@@ -32,20 +32,20 @@ def clock_action(currently_working: bool) -> bool:
 
     if os.path.exists(SESSION_FILE):
         try:
-            return _do(currently_working, headless=True)
+            return _do(currently_working)
         except _NeedsAuth:
-            print("[jobcan] セッション切れ。再認証が必要です。", flush=True)
+            print("[jobcan] セッション切れ。再認証します。", flush=True)
 
     import rumps
-    rumps.notification("Jobcan", "認証が必要です", "ブラウザで2FA認証を完了してください")
-    return _do(currently_working, headless=False)
+    rumps.notification("Jobcan", "認証が必要です", "スマホの承認通知を確認してください")
+    return _do(currently_working, allow_sso=True)
 
 
-def _do(currently_working: bool, headless: bool) -> bool:
+def _do(currently_working: bool, allow_sso: bool = False) -> bool:
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        browser = p.chromium.launch(headless=True)
 
         ctx_kwargs = {}
         if os.path.exists(SESSION_FILE):
@@ -55,13 +55,13 @@ def _do(currently_working: bool, headless: bool) -> bool:
         page = context.new_page()
 
         try:
-            print(f"[browser] アクセス中: {JOBCAN_URL} (headless={headless})", flush=True)
+            print(f"[browser] アクセス中: {JOBCAN_URL} (allow_sso={allow_sso})", flush=True)
             page.goto(JOBCAN_URL, wait_until="load")
             print(f"[browser] 現在のURL: {page.url}", flush=True)
 
             button = page.query_selector(BUTTON_SEL)
             if button is None:
-                if headless:
+                if not allow_sso:
                     print("[browser] 打刻ボタンなし → 再認証が必要", flush=True)
                     raise _NeedsAuth()
                 if JOBCAN_SSO_URL:
