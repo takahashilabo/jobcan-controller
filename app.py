@@ -1,7 +1,46 @@
+import os
+import subprocess
 import threading
+from datetime import datetime, date
+
 import rumps
+from dotenv import load_dotenv
+
 from jobcan.state import State
 from jobcan.browser import clock_action
+
+load_dotenv()
+
+AUTO_CHECKIN_SSID      = os.getenv("AUTO_CHECKIN_SSID", "")
+AUTO_CHECKIN_LAST_FILE = os.path.expanduser("~/.jobcan_last_auto_checkin")
+AUTO_CHECKIN_HOUR_FROM = 6
+AUTO_CHECKIN_HOUR_TO   = 13
+
+
+def _get_wifi_ssid() -> str:
+    for iface in ["en0", "en1", "en2"]:
+        try:
+            out = subprocess.run(
+                ["networksetup", "-getairportnetwork", iface],
+                capture_output=True, text=True, timeout=5
+            ).stdout
+            if "Current Wi-Fi Network:" in out:
+                return out.split("Current Wi-Fi Network:")[-1].strip()
+        except Exception:
+            continue
+    return ""
+
+
+def _is_auto_checkin_done_today() -> bool:
+    try:
+        return open(AUTO_CHECKIN_LAST_FILE).read().strip() == date.today().isoformat()
+    except FileNotFoundError:
+        return False
+
+
+def _mark_auto_checkin_today():
+    with open(AUTO_CHECKIN_LAST_FILE, "w") as f:
+        f.write(date.today().isoformat())
 
 
 class JobcanApp(rumps.App):
@@ -37,7 +76,7 @@ class JobcanApp(rumps.App):
     def _on_action(self, _):
         print("[app] ボタンが押されました", flush=True)
         self.title = self.TITLE_BUSY
-        self.action_btn.set_callback(None)  # 処理中は連打防止
+        self.action_btn.set_callback(None)
         threading.Thread(target=self._run_clock, daemon=True).start()
 
     def _run_clock(self):
@@ -56,6 +95,33 @@ class JobcanApp(rumps.App):
             self.action_btn.set_callback(self._on_action)
             self._sync_ui()
 
+    # ── 自動出勤 ──────────────────────────────────────────────────────────────
+
+    @rumps.timer(300)
+    def _auto_checkin_check(self, _):
+        if not AUTO_CHECKIN_SSID:
+            return
+        if self.state.is_working:
+            return
+
+        now = datetime.now()
+        if not (AUTO_CHECKIN_HOUR_FROM <= now.hour < AUTO_CHECKIN_HOUR_TO):
+            return
+
+        if _is_auto_checkin_done_today():
+            return
+
+        ssid = _get_wifi_ssid()
+        if ssid != AUTO_CHECKIN_SSID:
+            return
+
+        print(f"[auto] 学内WiFi({ssid})を検出 → 自動出勤します", flush=True)
+        _mark_auto_checkin_today()
+        rumps.notification("Jobcan", "自動出勤", f"{ssid} に接続中のため出勤打刻します")
+        threading.Thread(target=self._run_clock, daemon=True).start()
+
+    # ── その他 ────────────────────────────────────────────────────────────────
+
     def _set_state(self, working: bool):
         self.state.set_working(working)
         self._sync_ui()
@@ -67,7 +133,6 @@ class JobcanApp(rumps.App):
 
 
 if __name__ == "__main__":
-    # Dock アイコンを非表示にする（メニューバーアプリとして動作）
     from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
     NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
 
