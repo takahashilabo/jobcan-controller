@@ -51,12 +51,9 @@ class JobcanApp(rumps.App):
     def __init__(self):
         self.state = State()
         self.action_btn = rumps.MenuItem("", callback=self._on_action)
-        manual_menu = rumps.MenuItem("手動で状態を修正")
-        manual_menu.add(rumps.MenuItem("出勤済みにする", callback=lambda _: self._set_state(True)))
-        manual_menu.add(rumps.MenuItem("退勤済みにする", callback=lambda _: self._set_state(False)))
         super().__init__(
             self.TITLE_NOT_WORKING,
-            menu=[self.action_btn, manual_menu, None, rumps.MenuItem("終了", callback=self._quit)],
+            menu=[self.action_btn, None, rumps.MenuItem("終了", callback=self._quit)],
             quit_button=None,
         )
         self._sync_ui()
@@ -121,12 +118,6 @@ class JobcanApp(rumps.App):
         threading.Thread(target=self._run_clock, daemon=True).start()
 
     # ── その他 ────────────────────────────────────────────────────────────────
-
-    def _set_state(self, working: bool):
-        self.state.set_working(working)
-        self._sync_ui()
-        status = "出勤済み" if working else "退勤済み"
-        print(f"[app] 手動設定: {status}", flush=True)
 
     def _quit(self, _):
         rumps.quit_application()
