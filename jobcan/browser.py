@@ -37,7 +37,7 @@ def clock_action(currently_working: bool) -> bool:
             print("[jobcan] セッション切れ。再認証します。", flush=True)
 
     import rumps
-    rumps.notification("Jobcan", "認証が必要です", "スマホの承認通知を確認してください")
+    rumps.notification("Jobcan", "認証が必要です", "KINDAIログインを開始します")
     return _do(currently_working, allow_sso=True)
 
 
@@ -108,40 +108,89 @@ def _do(currently_working: bool, allow_sso: bool = False) -> bool:
 
 
 def _handle_sso(page):
-    page.wait_for_selector(SSO_USERNAME_SEL, state="visible")
+    print(f"[sso] 開始 URL: {page.url}", flush=True)
+    try:
+        page.wait_for_selector(SSO_USERNAME_SEL, state="visible", timeout=10_000)
+    except Exception:
+        print(f"[sso] ユーザー名フィールド({SSO_USERNAME_SEL})が見つからず", flush=True)
+        return
+    print(f"[sso] ユーザー名フィールド発見", flush=True)
+
     if SSO_USERNAME:
         page.fill(SSO_USERNAME_SEL, SSO_USERNAME)
+        page.press(SSO_USERNAME_SEL, "Enter")  # ID確定→パスワード画面へ遷移
+        print(f"[sso] ユーザー名入力・Enter送信完了", flush=True)
 
-    password_filled = False
-    if SSO_PASSWORD:
-        for sel in [SSO_PASSWORD_SEL, "input[type='password']"]:
-            try:
-                page.wait_for_selector(sel, state="visible", timeout=2_000)
-                page.fill(sel, SSO_PASSWORD)
-                password_filled = True
-                break
-            except Exception:
-                continue
-
-    _sso_click_submit(page)
-
-    if not password_filled and SSO_PASSWORD:
-        try:
-            page.wait_for_selector("input[type='password']", state="visible", timeout=10_000)
-            page.fill("input[type='password']", SSO_PASSWORD)
-        except Exception:
-            pass
-
-    # ２段階認証ボタンが表示されていればクリック（汎用フォールバックより先に試みる）
+    # パスワードフィールドが現れるまで待機
+    print("[sso] パスワードフィールド待機中...", flush=True)
     try:
-        page.wait_for_selector("button:has-text('２段階認証')", state="visible", timeout=3_000)
-        page.click("button:has-text('２段階認証')")
-        print("[browser] ２段階認証でログインをクリック", flush=True)
-        return
-    except Exception:
-        pass
+        page.wait_for_selector("input[type='password']", state="visible", timeout=10_000)
+        if SSO_PASSWORD:
+            page.fill("input[type='password']", SSO_PASSWORD)
+            print("[sso] パスワード入力完了", flush=True)
+    except Exception as e:
+        print(f"[sso] パスワード入力失敗: {e}", flush=True)
 
-    _sso_click_submit(page)
+    # ２段階認証ボタンをクリック（KINDAI は input#loginbtn）
+    print("[sso] ２段階認証ボタン探索中...", flush=True)
+    clicked = False
+    for sel in ["#loginbtn", "input[name='loginbtn']",
+                "button:has-text('２段階認証')", "text=２段階認証でログイン"]:
+        try:
+            page.wait_for_selector(sel, state="visible", timeout=3_000)
+            page.click(sel)
+            print(f"[browser] ２段階認証でログインをクリック ({sel})", flush=True)
+            clicked = True
+            break
+        except Exception:
+            continue
+
+    if not clicked:
+        _sso_click_submit(page)
+
+    _handle_confirm_code(page)
+
+
+def _handle_confirm_code(page):
+    """メール確認コード入力画面を処理する。"""
+    time.sleep(3)
+    conf_input = page.query_selector("input[placeholder='確認コード']")
+    if conf_input is None:
+        print(f"[sso] 確認コード画面なし URL: {page.url}", flush=True)
+        return
+
+    print("[sso] 確認コード入力画面を検出", flush=True)
+
+    # 「30日間スキップ」チェックボックスを確実にONにする
+    skip_cb = page.query_selector("input[type='checkbox']")
+    if skip_cb and not skip_cb.is_checked():
+        skip_cb.check()
+        print("[sso] 30日スキップ チェックON", flush=True)
+
+    # osascript でダイアログ表示（バックグラウンドスレッドから安全に呼べる）
+    import subprocess
+    print("[sso] 確認コード入力ダイアログを表示中...", flush=True)
+    result = subprocess.run(
+        ["osascript", "-e",
+         'display dialog "KINDAIのメールアドレスに届いた確認コードを入力してください" '
+         'default answer "" with title "KINDAI 確認コード" '
+         'buttons {"キャンセル", "ログイン"} default button "ログイン"'],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        raise Exception("確認コード入力がキャンセルされました")
+
+    # "button returned:ログイン, text returned:123456" を解析
+    code = result.stdout.strip().split("text returned:")[-1].strip()
+    if not code:
+        raise Exception("確認コードが空です")
+
+    print(f"[sso] 確認コードを入力: {'*' * len(code)}", flush=True)
+    page.fill("input[placeholder='確認コード']", code)
+    # Enterキーで送信（ボタンセレクタに依存しない）
+    page.press("input[placeholder='確認コード']", "Enter")
+    print("[sso] 確認コードを送信", flush=True)
 
 
 def _sso_click_submit(page):
