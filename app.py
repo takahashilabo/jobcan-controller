@@ -57,6 +57,7 @@ class JobcanApp(rumps.App):
             quit_button=None,
         )
         self._sync_ui()
+        rumps.Timer(self._auto_checkin_check, 300).start()
 
     # ── UI 更新 ───────────────────────────────────────────────────────────────
 
@@ -94,7 +95,6 @@ class JobcanApp(rumps.App):
 
     # ── 自動出勤 ──────────────────────────────────────────────────────────────
 
-    @rumps.timer(300)
     def _auto_checkin_check(self, _):
         if not AUTO_CHECKIN_SSID:
             return
