@@ -98,6 +98,9 @@ class JobcanApp(rumps.App):
     def _auto_checkin_check(self, _):
         if not AUTO_CHECKIN_SSID:
             return
+        # スリープ復帰後など日をまたいで出勤中のままの場合はリセット
+        if self.state.reset_if_stale():
+            self._sync_ui()
         if self.state.is_working:
             return
 
