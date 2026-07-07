@@ -11,13 +11,15 @@ from jobcan.browser import clock_action
 
 load_dotenv()
 
-AUTO_CHECKIN_SSID      = os.getenv("AUTO_CHECKIN_SSID", "")
-AUTO_CHECKIN_LAST_FILE = os.path.expanduser("~/.jobcan_last_auto_checkin")
-AUTO_CHECKIN_HOUR_FROM = 6
-AUTO_CHECKIN_HOUR_TO   = 13
+AUTO_CHECKIN_SSID               = os.getenv("AUTO_CHECKIN_SSID", "")
+AUTO_CHECKIN_GATEWAY_MAC_PREFIX = os.getenv("AUTO_CHECKIN_GATEWAY_MAC_PREFIX", "")
+AUTO_CHECKIN_LAST_FILE          = os.path.expanduser("~/.jobcan_last_auto_checkin")
+AUTO_CHECKIN_HOUR_FROM          = 6
+AUTO_CHECKIN_HOUR_TO            = 13
 
 
 def _get_wifi_ssid() -> str:
+    """SSID を返す。macOS の位置情報制限で取得できない場合は空文字。"""
     for iface in ["en0", "en1", "en2"]:
         try:
             out = subprocess.run(
@@ -29,6 +31,43 @@ def _get_wifi_ssid() -> str:
         except Exception:
             continue
     return ""
+
+
+def _get_gateway_mac_prefix() -> str:
+    """デフォルトゲートウェイの MAC アドレス OUI (xx:xx:xx) を返す。"""
+    try:
+        gw = subprocess.run(
+            ["ipconfig", "getoption", "en0", "router"],
+            capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        if not gw:
+            return ""
+        arp_out = subprocess.run(
+            ["arp", "-n", gw], capture_output=True, text=True, timeout=5
+        ).stdout
+        # "? (192.168.x.x) at 58:27:8c:a8:c8:e0 on en0 ..."
+        parts = arp_out.split(" at ")
+        if len(parts) >= 2:
+            mac = parts[1].split()[0]
+            return ":".join(mac.split(":")[:3]).lower()
+    except Exception:
+        pass
+    return ""
+
+
+def _is_target_network() -> bool:
+    """学内ネットワーク判定。SSID → ゲートウェイ MAC OUI の順で試みる。"""
+    ssid = _get_wifi_ssid()
+    if ssid:
+        result = ssid == AUTO_CHECKIN_SSID
+        print(f"[wifi] SSID={ssid!r} target={AUTO_CHECKIN_SSID!r} match={result}", flush=True)
+        return result
+    if AUTO_CHECKIN_GATEWAY_MAC_PREFIX:
+        prefix = _get_gateway_mac_prefix()
+        result = prefix == AUTO_CHECKIN_GATEWAY_MAC_PREFIX.lower()
+        print(f"[wifi] gateway MAC prefix={prefix!r} target={AUTO_CHECKIN_GATEWAY_MAC_PREFIX!r} match={result}", flush=True)
+        return result
+    return False
 
 
 def _is_auto_checkin_done_today() -> bool:
@@ -111,13 +150,12 @@ class JobcanApp(rumps.App):
         if _is_auto_checkin_done_today():
             return
 
-        ssid = _get_wifi_ssid()
-        if ssid != AUTO_CHECKIN_SSID:
+        if not _is_target_network():
             return
 
-        print(f"[auto] 学内WiFi({ssid})を検出 → 自動出勤します", flush=True)
+        print(f"[auto] 学内ネットワークを検出 → 自動出勤します", flush=True)
         _mark_auto_checkin_today()
-        rumps.notification("Jobcan", "自動出勤", f"{ssid} に接続中のため出勤打刻します")
+        rumps.notification("Jobcan", "自動出勤", "学内ネットワークを検出したため出勤打刻します")
         threading.Thread(target=self._run_clock, daemon=True).start()
 
     # ── その他 ────────────────────────────────────────────────────────────────
