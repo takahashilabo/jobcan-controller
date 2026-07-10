@@ -80,6 +80,19 @@ def _do(currently_working: bool, allow_sso: bool = False) -> bool:
 
             print(f"[browser] 打刻ボタン待機中...", flush=True)
             page.wait_for_selector(BUTTON_SEL, timeout=30_000)
+
+            # クリック前にサーバー上の実際の状態を確認
+            status_before = page.text_content(STATUS_SEL) or ""
+            actual_working = WORKING_TEXT in status_before
+            desired_working = not currently_working
+            print(f"[browser] クリック前の状態: {status_before.strip()!r} actual={actual_working} desired={desired_working}", flush=True)
+
+            if actual_working == desired_working:
+                # すでに望む状態なのでクリック不要（ローカル状態とサーバーのズレを補正）
+                print(f"[browser] すでに{'出勤中' if desired_working else '未出勤'} → クリックをスキップ", flush=True)
+                context.storage_state(path=SESSION_FILE)
+                return actual_working
+
             page.click(BUTTON_SEL)
             print(f"[browser] 打刻ボタンをクリック", flush=True)
 
