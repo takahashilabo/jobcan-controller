@@ -150,13 +150,36 @@ class JobcanApp(rumps.App):
         if _is_auto_checkin_done_today():
             return
 
+        if getattr(self, '_auto_in_progress', False):
+            return
+
         if not _is_target_network():
             return
 
         print(f"[auto] 学内ネットワークを検出 → 自動出勤します", flush=True)
-        _mark_auto_checkin_today()
+        self._auto_in_progress = True
         rumps.notification("Jobcan", "自動出勤", "学内ネットワークを検出したため出勤打刻します")
-        threading.Thread(target=self._run_clock, daemon=True).start()
+        threading.Thread(target=self._run_auto_clock, daemon=True).start()
+
+    def _run_auto_clock(self):
+        """自動出勤用。成功したときだけ今日分をマーク（失敗時は次のタイマーで再試行）。"""
+        try:
+            print(f"[app] 自動出勤 処理開始", flush=True)
+            new_state = clock_action(currently_working=False)
+            self.state.set_working(new_state)
+            if new_state:
+                _mark_auto_checkin_today()
+                print("[app] 自動出勤成功 → 今日完了マーク", flush=True)
+                rumps.notification("Jobcan", "", "出勤しました ✓")
+            else:
+                print("[app] 自動出勤失敗（打刻不可） → 次のタイマーで再試行", flush=True)
+                rumps.notification("Jobcan", "自動出勤 失敗", "次の周期で再試行します")
+        except Exception as e:
+            print(f"[app] 自動出勤エラー: {e}", flush=True)
+            rumps.notification("Jobcan", "自動出勤 エラー", str(e))
+        finally:
+            self._auto_in_progress = False
+            self._sync_ui()
 
     # ── その他 ────────────────────────────────────────────────────────────────
 
