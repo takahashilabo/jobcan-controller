@@ -45,7 +45,6 @@ def _get_gateway_mac_prefix() -> str:
         arp_out = subprocess.run(
             ["arp", "-n", gw], capture_output=True, text=True, timeout=5
         ).stdout
-        # "? (192.168.x.x) at 58:27:8c:a8:c8:e0 on en0 ..."
         parts = arp_out.split(" at ")
         if len(parts) >= 2:
             mac = parts[1].split()[0]
@@ -82,6 +81,12 @@ def _mark_auto_checkin_today():
         f.write(date.today().isoformat())
 
 
+def _notify_problem(title: str, message: str):
+    """問題発生時の通知。ログにも残す。"""
+    print(f"[notify] {title}: {message}", flush=True)
+    rumps.notification("Jobcan ⚠️", title, message)
+
+
 class JobcanApp(rumps.App):
     TITLE_WORKING     = "🔴 出勤中"
     TITLE_NOT_WORKING = "⚪ 未出勤"
@@ -108,7 +113,7 @@ class JobcanApp(rumps.App):
             self.title = self.TITLE_NOT_WORKING
             self.action_btn.title = "出勤する"
 
-    # ── ボタン押下 ────────────────────────────────────────────────────────────
+    # ── ボタン押下（手動）────────────────────────────────────────────────────
 
     def _on_action(self, _):
         print("[app] ボタンが押されました", flush=True)
@@ -127,7 +132,7 @@ class JobcanApp(rumps.App):
         except Exception as e:
             print(f"[app] エラー: {e}", flush=True)
             import traceback; traceback.print_exc()
-            rumps.notification("Jobcan", "エラー", str(e))
+            _notify_problem("打刻エラー", f"Jobcanへの接続に失敗しました: {e}")
         finally:
             self.action_btn.set_callback(self._on_action)
             self._sync_ui()
@@ -137,9 +142,16 @@ class JobcanApp(rumps.App):
     def _auto_checkin_check(self, _):
         if not AUTO_CHECKIN_SSID:
             return
-        # スリープ復帰後など日をまたいで出勤中のままの場合はリセット
+
+        # 日をまたいで出勤中のままだったらリセット（退勤打刻し忘れ）
         if self.state.reset_if_stale():
             self._sync_ui()
+            _notify_problem(
+                "出勤状態をリセット",
+                "昨日退勤打刻されていなかったため未出勤に戻しました。"
+                "Jobcan側は手動修正が必要な場合があります。"
+            )
+
         if self.state.is_working:
             return
 
@@ -158,7 +170,6 @@ class JobcanApp(rumps.App):
 
         print(f"[auto] 学内ネットワークを検出 → 自動出勤します", flush=True)
         self._auto_in_progress = True
-        rumps.notification("Jobcan", "自動出勤", "学内ネットワークを検出したため出勤打刻します")
         threading.Thread(target=self._run_auto_clock, daemon=True).start()
 
     def _run_auto_clock(self):
@@ -169,14 +180,19 @@ class JobcanApp(rumps.App):
             self.state.set_working(new_state)
             if new_state:
                 _mark_auto_checkin_today()
-                print("[app] 自動出勤成功 → 今日完了マーク", flush=True)
-                rumps.notification("Jobcan", "", "出勤しました ✓")
+                print("[app] 自動出勤成功", flush=True)
             else:
                 print("[app] 自動出勤失敗（打刻不可） → 次のタイマーで再試行", flush=True)
-                rumps.notification("Jobcan", "自動出勤 失敗", "次の周期で再試行します")
+                _notify_problem(
+                    "自動出勤 失敗",
+                    "学内ネットワークを検出しましたが打刻が受け付けられませんでした。"
+                    "5分後に再試行します。"
+                    "繰り返す場合はJobcanのIP認証範囲外の可能性があります。"
+                )
         except Exception as e:
             print(f"[app] 自動出勤エラー: {e}", flush=True)
-            rumps.notification("Jobcan", "自動出勤 エラー", str(e))
+            import traceback; traceback.print_exc()
+            _notify_problem("自動出勤 エラー", str(e))
         finally:
             self._auto_in_progress = False
             self._sync_ui()
