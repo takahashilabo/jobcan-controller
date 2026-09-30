@@ -15,7 +15,7 @@ AUTO_CHECKIN_SSID               = os.getenv("AUTO_CHECKIN_SSID", "")
 AUTO_CHECKIN_GATEWAY_MAC_PREFIX = os.getenv("AUTO_CHECKIN_GATEWAY_MAC_PREFIX", "")
 AUTO_CHECKIN_LAST_FILE          = os.path.expanduser("~/.jobcan_last_auto_checkin")
 AUTO_CHECKIN_HOUR_FROM          = 6
-AUTO_CHECKIN_HOUR_TO            = 13
+AUTO_CHECKIN_HOUR_TO            = 20
 
 
 def _get_wifi_ssid() -> str:
@@ -42,6 +42,9 @@ def _get_gateway_mac_prefix() -> str:
         ).stdout.strip()
         if not gw:
             return ""
+        # ARPキャッシュが空の場合に備えて ping でエントリを生成する
+        subprocess.run(["ping", "-c", "1", "-t", "1", gw],
+                       capture_output=True, timeout=3)
         arp_out = subprocess.run(
             ["arp", "-n", gw], capture_output=True, text=True, timeout=5
         ).stdout
