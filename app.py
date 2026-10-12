@@ -12,14 +12,37 @@ from jobcan.browser import clock_action
 load_dotenv()
 
 AUTO_CHECKIN_SSID               = os.getenv("AUTO_CHECKIN_SSID", "")
+AUTO_CHECKIN_GATEWAY_IP         = os.getenv("AUTO_CHECKIN_GATEWAY_IP", "")
 AUTO_CHECKIN_GATEWAY_MAC_PREFIX = os.getenv("AUTO_CHECKIN_GATEWAY_MAC_PREFIX", "")
 AUTO_CHECKIN_LAST_FILE          = os.path.expanduser("~/.jobcan_last_auto_checkin")
 AUTO_CHECKIN_HOUR_FROM          = 6
 AUTO_CHECKIN_HOUR_TO            = 20
 
 
-def _get_wifi_ssid() -> str:
-    """SSID を返す。macOS の位置情報制限で取得できない場合は空文字。"""
+def _get_gateway_ip() -> str:
+    """デフォルトゲートウェイの IP アドレスを返す。"""
+    for iface in ["en0", "en1", "en2"]:
+        try:
+            gw = subprocess.run(
+                ["ipconfig", "getoption", iface, "router"],
+                capture_output=True, text=True, timeout=5
+            ).stdout.strip()
+            if gw:
+                return gw
+        except Exception:
+            continue
+    return ""
+
+
+def _is_target_network() -> bool:
+    """学内ネットワーク判定。ゲートウェイ IP で判別する（macOS 位置情報制限のため SSID 不可）。"""
+    gw = _get_gateway_ip()
+    print(f"[wifi] gateway IP={gw!r}", flush=True)
+    if AUTO_CHECKIN_GATEWAY_IP:
+        result = gw == AUTO_CHECKIN_GATEWAY_IP
+        print(f"[wifi] gateway IP match={result} target={AUTO_CHECKIN_GATEWAY_IP!r}", flush=True)
+        return result
+    # AUTO_CHECKIN_GATEWAY_IP 未設定時は SSID フォールバック（位置情報権限がある場合のみ有効）
     for iface in ["en0", "en1", "en2"]:
         try:
             out = subprocess.run(
@@ -27,48 +50,13 @@ def _get_wifi_ssid() -> str:
                 capture_output=True, text=True, timeout=5
             ).stdout
             if "Current Wi-Fi Network:" in out:
-                return out.split("Current Wi-Fi Network:")[-1].strip()
+                ssid = out.split("Current Wi-Fi Network:")[-1].strip()
+                result = ssid == AUTO_CHECKIN_SSID
+                print(f"[wifi] SSID={ssid!r} match={result}", flush=True)
+                return result
         except Exception:
             continue
-    return ""
-
-
-def _get_gateway_mac_prefix() -> str:
-    """デフォルトゲートウェイの MAC アドレス OUI (xx:xx:xx) を返す。"""
-    try:
-        gw = subprocess.run(
-            ["ipconfig", "getoption", "en0", "router"],
-            capture_output=True, text=True, timeout=5
-        ).stdout.strip()
-        if not gw:
-            return ""
-        # ARPキャッシュが空の場合に備えて ping でエントリを生成する
-        subprocess.run(["ping", "-c", "1", "-t", "1", gw],
-                       capture_output=True, timeout=3)
-        arp_out = subprocess.run(
-            ["arp", "-n", gw], capture_output=True, text=True, timeout=5
-        ).stdout
-        parts = arp_out.split(" at ")
-        if len(parts) >= 2:
-            mac = parts[1].split()[0]
-            return ":".join(mac.split(":")[:3]).lower()
-    except Exception:
-        pass
-    return ""
-
-
-def _is_target_network() -> bool:
-    """学内ネットワーク判定。SSID → ゲートウェイ MAC OUI の順で試みる。"""
-    ssid = _get_wifi_ssid()
-    if ssid:
-        result = ssid == AUTO_CHECKIN_SSID
-        print(f"[wifi] SSID={ssid!r} target={AUTO_CHECKIN_SSID!r} match={result}", flush=True)
-        return result
-    if AUTO_CHECKIN_GATEWAY_MAC_PREFIX:
-        prefix = _get_gateway_mac_prefix()
-        result = prefix == AUTO_CHECKIN_GATEWAY_MAC_PREFIX.lower()
-        print(f"[wifi] gateway MAC prefix={prefix!r} target={AUTO_CHECKIN_GATEWAY_MAC_PREFIX!r} match={result}", flush=True)
-        return result
+    print("[wifi] gateway IP not configured – set AUTO_CHECKIN_GATEWAY_IP in .env", flush=True)
     return False
 
 
