@@ -12,52 +12,32 @@ from jobcan.browser import clock_action
 load_dotenv()
 
 AUTO_CHECKIN_SSID               = os.getenv("AUTO_CHECKIN_SSID", "")
-AUTO_CHECKIN_GATEWAY_IP         = os.getenv("AUTO_CHECKIN_GATEWAY_IP", "")
-AUTO_CHECKIN_GATEWAY_MAC_PREFIX = os.getenv("AUTO_CHECKIN_GATEWAY_MAC_PREFIX", "")
+AUTO_CHECKIN_PUBLIC_IP_PREFIX   = os.getenv("AUTO_CHECKIN_PUBLIC_IP_PREFIX", "")
 AUTO_CHECKIN_LAST_FILE          = os.path.expanduser("~/.jobcan_last_auto_checkin")
 AUTO_CHECKIN_HOUR_FROM          = 6
 AUTO_CHECKIN_HOUR_TO            = 20
 
 
-def _get_gateway_ip() -> str:
-    """デフォルトゲートウェイの IP アドレスを返す。"""
-    for iface in ["en0", "en1", "en2"]:
-        try:
-            gw = subprocess.run(
-                ["ipconfig", "getoption", iface, "router"],
-                capture_output=True, text=True, timeout=5
-            ).stdout.strip()
-            if gw:
-                return gw
-        except Exception:
-            continue
+def _get_public_ip() -> str:
+    """外部から見たパブリック IP アドレスを返す。"""
+    import urllib.request
+    try:
+        with urllib.request.urlopen("https://api.ipify.org", timeout=5) as resp:
+            return resp.read().decode().strip()
+    except Exception:
+        pass
     return ""
 
 
 def _is_target_network() -> bool:
-    """学内ネットワーク判定。ゲートウェイ IP で判別する（macOS 位置情報制限のため SSID 不可）。"""
-    gw = _get_gateway_ip()
-    print(f"[wifi] gateway IP={gw!r}", flush=True)
-    if AUTO_CHECKIN_GATEWAY_IP:
-        result = gw == AUTO_CHECKIN_GATEWAY_IP
-        print(f"[wifi] gateway IP match={result} target={AUTO_CHECKIN_GATEWAY_IP!r}", flush=True)
-        return result
-    # AUTO_CHECKIN_GATEWAY_IP 未設定時は SSID フォールバック（位置情報権限がある場合のみ有効）
-    for iface in ["en0", "en1", "en2"]:
-        try:
-            out = subprocess.run(
-                ["networksetup", "-getairportnetwork", iface],
-                capture_output=True, text=True, timeout=5
-            ).stdout
-            if "Current Wi-Fi Network:" in out:
-                ssid = out.split("Current Wi-Fi Network:")[-1].strip()
-                result = ssid == AUTO_CHECKIN_SSID
-                print(f"[wifi] SSID={ssid!r} match={result}", flush=True)
-                return result
-        except Exception:
-            continue
-    print("[wifi] gateway IP not configured – set AUTO_CHECKIN_GATEWAY_IP in .env", flush=True)
-    return False
+    """学内ネットワーク判定。パブリック IP プレフィックスで判別する。"""
+    if not AUTO_CHECKIN_PUBLIC_IP_PREFIX:
+        print("[wifi] AUTO_CHECKIN_PUBLIC_IP_PREFIX 未設定", flush=True)
+        return False
+    ip = _get_public_ip()
+    result = ip.startswith(AUTO_CHECKIN_PUBLIC_IP_PREFIX)
+    print(f"[wifi] public IP={ip!r} prefix={AUTO_CHECKIN_PUBLIC_IP_PREFIX!r} match={result}", flush=True)
+    return result
 
 
 def _is_auto_checkin_done_today() -> bool:
